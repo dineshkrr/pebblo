@@ -1,6 +1,10 @@
 # Fill-in OPENAI_API_KEY in .env file in this directory before proceeding
 from dotenv import load_dotenv
-from google_auth import get_authorized_identities
+load_dotenv()
+
+import asyncio
+import os
+from msgraph_sdk_auth import get_authorized_identities
 from langchain_community.chains import PebbloRetrievalQA
 from langchain_community.chains.pebblo_retrieval.models import (
     AuthContext,
@@ -9,29 +13,31 @@ from langchain_community.chains.pebblo_retrieval.models import (
 from langchain_community.document_loaders import UnstructuredFileIOLoader
 from langchain_community.document_loaders.pebblo import PebbloSafeLoader
 from langchain_community.vectorstores.qdrant import Qdrant
-from langchain_google_community import GoogleDriveLoader
+from langchain_community.document_loaders import SharePointLoader
 from langchain_openai.embeddings import OpenAIEmbeddings
 from langchain_openai.llms import OpenAI
 
-load_dotenv()
+
 
 
 class PebbloIdentityRAG:
-    def __init__(self, folder_id: str, collection_name: str):
+    def __init__(self, drive_id: str, folder_path: str, collection_name: str):
         self.loader_app_name = "pebblo-identity-loader"
         self.retrieval_app_name = "pebblo-identity-retriever"
         self.collection_name = collection_name
+        self.drive_id = drive_id
+        self.folder_path = folder_path
 
         # Load documents
         print("\nLoading RAG documents ...")
         self.loader = PebbloSafeLoader(
-            GoogleDriveLoader(
-                folder_id=folder_id,
-                token_path="./google_token.json",
-                recursive=True,
-                file_loader_cls=UnstructuredFileIOLoader,
-                file_loader_kwargs={"mode": "elements"},
+            SharePointLoader(
+                document_library_id=self.drive_id,
+                folder_path=self.folder_path or "/",
+                auth_with_token=True,
                 load_auth=True,
+                recursive=True,
+                load_extended_metadata=True,
             ),
             name=self.loader_app_name,  # App name (Mandatory)
             owner="Joe Smith",  # Owner (Optional)
@@ -91,24 +97,29 @@ if __name__ == "__main__":
     input_collection_name = "identity-enabled-rag"
 
     print("Please enter ingestion user details for loading data...")
-    ingestion_user_email_address = input("email address : ")
-    ingestion_user_service_account_path = input("service-account.json path : ")
-    input_folder_id = input("Folder id : ")
+    app_client_id = input("App client id : ") or os.environ.get("O365_CLIENT_ID")
+    app_client_secret = input("App client secret : ") or os.environ.get("O365_CLIENT_SECRET")
+    tenant_id = input("Tenant id : ") or os.environ.get("O365_TENANT_ID")
+    
+    drive_id = input("Drive id : ") or "b!TVvGZhXfGUuSKMdCgOucz08XRKxsDuVCojWCjzBMN-as9t-EstljQKBl332OMJnI"
 
     rag_app = PebbloIdentityRAG(
-        folder_id=input_folder_id, collection_name=input_collection_name
+        drive_id = drive_id, folder_path = "/document", collection_name=input_collection_name
     )
-
+    loop = asyncio.get_event_loop()
+    
     while True:
         print("Please enter end user details below")
-        end_user_email_address = input("User email address : ")
-        prompt = input("Please provide the prompt : ")
+        end_user_email_address = input("User email address : ") or "arpit@daxaai.onmicrosoft.com"
+        prompt = input("Please provide the prompt : ") or "tell me about sample.pdf."
         print(f"User: {end_user_email_address}.\nQuery:{prompt}\n")
-
-        authorized_identities = get_authorized_identities(
-            admin_user_email_address=ingestion_user_email_address,
-            credentials_file_path=ingestion_user_service_account_path,
-            user_email=end_user_email_address,
+        authorized_identities = loop.run_until_complete(
+            get_authorized_identities(
+                user_id=end_user_email_address,
+                client_id = app_client_id,
+                client_secret = app_client_secret,
+                tenant_id = tenant_id,
+            )
         )
         response = rag_app.ask(prompt, end_user_email_address, authorized_identities)
         print(f"Response:\n{response}")
